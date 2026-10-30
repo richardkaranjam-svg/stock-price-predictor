@@ -1,3 +1,49 @@
+# Python / Virtual Environment
 .venv/
 __pycache__/
 *.py[cod]
+*$py.class
+*.log
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# IDE & Editor configs
+.vscode/
+.continue/
+.pytest_cache/
+
+# Runtime caches & Local databases
+.cache*
+*.db
+marketaux_usage.json
+marketaux_cache.json
+historical_news.csv
+
+# Educational / Course materials
+Python_AI_ML_*
+lesson_week*
+Untitled*
+
+# Local logs
+*.log
+logs/
+app_debug.log
+
+# Archived / local runners / non-v3+ scripts
+debug_runner.py
+compute_chop_rate_v2_archived.py
+eda.py
+ingest_news.py
+lstm_model.py
+requirements-kaggle.txt
+requirements-lstm.txt
+stock_price_model_old.pkl
+stock_price_model_v2.pkl
+create_shortcuts.ps1
+register_task.ps1
+run_silent.vbs
+start_server.bat
+stop_server.bat
