@@ -36,7 +36,10 @@ def get_alpaca_client():
     secret = os.environ.get('APCA_API_SECRET_KEY')
     if not key or not secret:
         raise RuntimeError('Set APCA_API_KEY_ID and APCA_API_SECRET_KEY first.')
-    if os.environ.get('APCA_API_BASE_URL', 'https://paper-api.alpaca.markets') != 'https://paper-api.alpaca.markets':
+    raw_url = os.environ.get('APCA_API_BASE_URL', 'https://paper-api.alpaca.markets').strip().rstrip('/')
+    if raw_url.endswith('/v2'):
+        raw_url = raw_url[:-3].rstrip('/')
+    if raw_url != 'https://paper-api.alpaca.markets':
         raise RuntimeError('Only Alpaca paper trading is enabled by this application.')
     return TradingClient(key, secret, paper=True)
 
