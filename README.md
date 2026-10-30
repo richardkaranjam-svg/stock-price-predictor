@@ -1,47 +1,42 @@
 # Stock Price Prediction Model
 
-## 📊 Project Overview
-A machine learning model that predicts stock prices using historical data and technical indicators. Built to learn ML fundamentals and add to my portfolio.
+## What This Project Does
+This project uses **Machine Learning** to predict stock prices using Python and scikit-learn.
 
-## 🎯 Features
-- Downloads historical stock price data
-- Preprocesses and analyzes data
-- Trains machine learning models
-- Makes future price predictions
-- Visualizes results
+## Features
+- Downloads real stock data from Yahoo Finance
+- Trains a Random Forest model on historical prices
+- Makes predictions for future stock prices
+- Shows accuracy metrics (R² Score, RMSE, MAE)
+- Fully version controlled on GitHub
 
-## 🛠️ Technologies Used
-- **Python 3.x**
-- **Libraries:** pandas, numpy, scikit-learn, matplotlib
-- **Data Source:** Yahoo Finance (yfinance)
+## Installation
 
-## 📦 Installation
+### Step 1: Install Python
+Download from python.org and install
 
-1. Clone the repository:
-```bash
-git clone https://github.com/richardkaranjam-svg/stock-price-predictor.git
-cd stock-price-predictor
-```
-
-2. Install required libraries:
+### Step 2: Install Required Libraries
 ```bash
 pip install -r requirements.txt
 ```
 
-## 🚀 Usage
+## How to Use
 
-Run the main script:
+### Step 1: Train the Model
 ```bash
-python stock_prediction.py
+python train_model.py
 ```
 
-## 📈 Results
-[Add details about what your model predicts]
+This downloads Apple stock data and trains the model. You'll see:
+- Training progress
+- Accuracy metrics
+- Model saved confirmation
 
-## 🌟 Future Improvements
-- Add more advanced ML models (LSTM, Random Forest)
-- Include real-time predictions
-- Create a web interface
+### Step 2: Make Predictions
+```bash
+python predict.py
+```
 
-## 📧 Contact
-Feel free to reach out!
+This uses the trained model to predict tomorrow's stock price for Apple.
+
+## Project Structure

@@ -1,15 +1,17 @@
 import joblib
-import numpy as np
 import yfinance as yf
 import pandas as pd
+from pathlib import Path
 
 # This file uses the trained model to make predictions
+
+MODEL_PATH = Path(__file__).resolve().parent / 'stock_price_model.pkl'
 
 def get_latest_stock_data(ticker, days=30):
     """
     Get the latest stock data for prediction
     """
-    data = yf.download(ticker, period='30d', progress=False)
+    data = yf.download(ticker, period=f'{days}d', progress=False)
     return data
 
 
@@ -24,10 +26,10 @@ def predict_next_price(ticker='AAPL'):
     
     # Load the trained model
     try:
-        model = joblib.load('stock_price_model.pkl')
-        print("✓ Model loaded!")
-    except:
-        print("❌ Model not found! Train the model first by running: python train_model.py")
+        model = joblib.load(MODEL_PATH)
+        print(f"Model loaded: {MODEL_PATH.name}")
+    except FileNotFoundError:
+        print("Model not found. Train it first by running: python train_model.py")
         return
     
     # Get latest data
@@ -47,8 +49,8 @@ def predict_next_price(ticker='AAPL'):
     latest_features = features.iloc[-1:].dropna()
     
     # Make prediction
-    predicted_price = model.predict(latest_features)[0]
-    current_price = data['Close'].iloc[-1]
+    predicted_price = float(model.predict(latest_features)[0])
+    current_price = float(data['Close'].iloc[-1])
     price_change = predicted_price - current_price
     change_percent = (price_change / current_price) * 100
     
@@ -57,9 +59,9 @@ def predict_next_price(ticker='AAPL'):
     print(f"Expected Change: ${price_change:.2f} ({change_percent:+.2f}%)")
     
     if price_change > 0:
-        print("📈 Stock expected to GO UP")
+        print("Trend: Stock expected to go up")
     else:
-        print("📉 Stock expected to GO DOWN")
+        print("Trend: Stock expected to go down")
     
     print(f"{'='*50}\n")
     
