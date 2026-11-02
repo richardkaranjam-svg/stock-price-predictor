@@ -19,7 +19,7 @@ function formatNewsSentiment(value) {
   return 'neutral';
 }
 
-// Fetch and display model metadata dynamically (Tweak 3)
+// Fetch and display model metadata dynamically
 async function loadModelMetadata() {
   try {
     const resp = await fetch('/model/metadata');
@@ -75,6 +75,16 @@ function renderResult(data) {
     ? 'News signal used: ' + formatNewsSentiment(data.news && data.news.sentiment)
     : 'News shown for context only; retrain with historical data to use it.';
 
+  // Market closed banner
+  let marketNotice = '';
+  if (data.market_closed) {
+    const reason = (data.market_status && data.market_status.reason) || 'US market is currently closed';
+    marketNotice = '<div style="background:rgba(245,166,35,0.12);border:1px solid #f5a623;border-radius:6px;padding:0.6rem 0.85rem;margin-bottom:1rem;color:#f5a623;font-size:0.85rem;line-height:1.4;">' +
+      '⏸ <strong>Market Closed</strong>: ' + reason + '.<br>' +
+      '<span style="color:var(--text-muted);font-size:0.8rem;">Displaying institutional forecast based on latest closed market bars.</span>' +
+      '</div>';
+  }
+
   // V3+ model staleness warning
   let stalenessNote = '';
   if (data.model_status && data.model_status.retrain_recommended_in_cloud) {
@@ -101,6 +111,7 @@ function renderResult(data) {
 
   resultCard.innerHTML =
     '<div class="result-content">' +
+      marketNotice +
       '<p class="result-label">Model forecast <span style="opacity:0.5;font-size:0.8em;">' + modelVersion + '</span></p>' +
       '<h2 class="result-ticker">' + data.ticker + ' <span aria-hidden="true">/</span> next ' + horizonBars + ' bars</h2>' +
       '<p class="result-price">' + currency.format(data.current_price) + '</p>' +
@@ -174,8 +185,7 @@ async function setAutoTrading(path, message) {
   } catch (error) {
     autoStatus.textContent = error.message;
   } finally {
-    autoStart.disabled = false;
-    autoStop.disabled = false;
+    refreshAutoStatus();
   }
 }
 
@@ -189,7 +199,7 @@ async function refreshAutoStatus() {
     if (!response.ok) throw new Error(data.error || 'Status unavailable.');
 
     var decisionStr = '';
-    if (data.latest_decision) {
+    if (data.running && data.latest_decision) {
       var act = data.latest_decision.action.toUpperCase();
       var rsn = data.latest_decision.reason || data.latest_decision.error || '';
       decisionStr = ' | LAST ' + act + (rsn ? ' (' + rsn + ')' : '');
@@ -208,7 +218,7 @@ async function refreshAutoStatus() {
 
     autoStatus.textContent = data.running
       ? 'RUNNING - checking ' + data.ticker + ' every ' + intervalStr + decisionStr + perfStr + '.'
-      : 'STOPPED - no automatic orders are being placed.' + decisionStr;
+      : 'STOPPED - autonomous trading is idle.' + perfStr;
 
     autoStatus.classList.toggle('running', data.running);
     autoStatus.classList.toggle('stopped', !data.running);
@@ -221,7 +231,7 @@ async function refreshAutoStatus() {
 }
 
 refreshAutoStatus();
-setInterval(refreshAutoStatus, 15000);
+let autoRefreshTimer = setInterval(refreshAutoStatus, 15000);
 
 const chartSymbolBadge = document.querySelector('#chart-symbol-badge');
 
@@ -266,33 +276,20 @@ form.addEventListener('submit', async function(event) {
 
   button.disabled = true;
   resultCard.setAttribute('aria-busy', 'true');
-  status.textContent = 'Pulling the latest ' + ticker + ' data...';
+  status.textContent = 'Pulling latest ' + ticker + ' market data...';
 
   try {
     const response = await fetch('/predict?ticker=' + encodeURIComponent(ticker));
     const data = await response.json();
 
-    // Market-closed guard: show a dedicated card instead of a generic error
-    if (data.market_closed === true) {
-      resultCard.innerHTML =
-        '<div class="result-content">' +
-          '<p class="result-label">Market Status</p>' +
-          '<h2 class="result-ticker">' + ticker + '</h2>' +
-          '<p class="result-change" style="color:#f5a623;">⏸ Market Closed</p>' +
-          '<p style="color:var(--text-muted);font-size:.9rem;margin-top:.5rem;">' +
-            'US equities trade 09:30 – 16:00 ET, Monday to Friday.<br>' +
-            'Come back during market hours for live forecasts.' +
-          '</p>' +
-        '</div>';
-      resultCard.setAttribute('aria-busy', 'false');
-      status.textContent = 'Market is currently closed.';
-      return;
-    }
-
     if (!response.ok) throw new Error(data.error || 'The forecast could not be generated.');
     renderResult(data);
     resultCard.setAttribute('aria-busy', 'false');
-    status.textContent = 'Forecast updated for ' + ticker + '.';
+    if (data.market_closed) {
+      status.textContent = 'Forecast loaded (Market is currently closed — showing latest close data).';
+    } else {
+      status.textContent = 'Forecast updated for ' + ticker + '.';
+    }
   } catch (error) {
     resultCard.setAttribute('aria-busy', 'false');
     status.textContent = error.message;
@@ -308,6 +305,10 @@ const shutdownBtn = document.querySelector('#server-shutdown-btn');
 if (shutdownBtn) {
   shutdownBtn.addEventListener('click', async () => {
     if (!confirm('Are you sure you want to stop the background server?')) return;
+    if (autoRefreshTimer) {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = null;
+    }
     shutdownBtn.disabled = true;
     shutdownBtn.textContent = 'Stopping...';
     try {
@@ -318,3 +319,45 @@ if (shutdownBtn) {
     }
   });
 }
+
+
+// Fetch and render recent signals from SQLite
+async function loadRecentSignals() {
+  const container = document.getElementById('signals-table-container');
+  const badge = document.getElementById('signals-count-badge');
+  if (!container) return;
+  try {
+    const res = await fetch('/paper/signals?limit=10');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (badge) badge.textContent = `${data.count} signals logged`;
+    if (!data.signals || data.signals.length === 0) {
+      container.innerHTML = '<p style="color:var(--text-muted); padding:4px 0;">No signals recorded yet.</p>';
+      return;
+    }
+    let html = '<table style="width:100%; border-collapse:collapse; text-align:left;">' +
+      '<thead><tr style="border-bottom:1px solid #374151; color:#9ca3af;">' +
+      '<th style="padding:4px;">Time</th><th>Side</th><th>Price</th><th>Conf</th><th>Hash</th>' +
+      '</tr></thead><tbody>';
+    for (const s of data.signals) {
+      const timeStr = s.timestamp_utc ? s.timestamp_utc.substring(11, 19) : '--:--:--';
+      const sideColor = s.side === 'long' ? '#34d399' : (s.side === 'short' ? '#f87171' : '#9ca3af');
+      const hashShort = s.features_hash ? s.features_hash.substring(0, 8) + '...' : '-';
+      const sideText = s.side ? s.side.toUpperCase() : '-';
+      html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+        <td style="padding:4px;">${timeStr}</td>
+        <td style="color:${sideColor}; font-weight:bold;">${sideText}</td>
+        <td>$${s.price ? Number(s.price).toFixed(2) : '-'}</td>
+        <td>${s.confidence != null ? (Number(s.confidence) * 100).toFixed(0) : '-'}%</td>
+        <td style="color:#6b7280;" title="${s.features_hash || ''}">${hashShort}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = '<p style="color:var(--text-muted); padding:4px 0;">Signals feed idle.</p>';
+  }
+}
+
+loadRecentSignals();
+setInterval(loadRecentSignals, 15000);

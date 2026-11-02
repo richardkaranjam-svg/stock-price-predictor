@@ -1,0 +1,41 @@
+{
+  "verdict": "PASS",
+  "reasons": [],
+  "generated_at": "2026-11-02T21:28:00.664484+00:00",
+  "metrics": {
+    "n_trades": 103,
+    "trades_per_day": 0.02,
+    "win_rate": 0.7573,
+    "avg_win": 1318.33,
+    "avg_loss": -1054.8,
+    "expectancy": 742.33,
+    "expectancy_usd": 742.33,
+    "expectancy_r": 0.554,
+    "profit_factor": 3.9,
+    "net_pnl": 76460.0,
+    "max_drawdown_pct": 1.93,
+    "sharpe": 1.18,
+    "gross_win": 102830.0,
+    "gross_loss": 26370.0,
+    "total_costs": 3090.0,
+    "per_ticker": {
+      "CUSTOM_STRATEGY": {
+        "n_trades": 103,
+        "trades_per_day": 0.02,
+        "win_rate": 0.7573,
+        "avg_win": 1318.33,
+        "avg_loss": -1054.8,
+        "expectancy": 742.33,
+        "expectancy_usd": 742.33,
+        "expectancy_r": 0.554,
+        "profit_factor": 3.9,
+        "net_pnl": 76460.0,
+        "max_drawdown_pct": 1.93,
+        "sharpe": 1.18,
+        "gross_win": 102830.0,
+        "gross_loss": 26370.0,
+        "total_costs": 3090.0
+      }
+    }
+  }
+}

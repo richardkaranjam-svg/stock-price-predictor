@@ -41,6 +41,14 @@ FEATURE_COLUMNS: List[str] = [
     'spy_vwap_dev_atr', 'spy_vol_regime_ratio',
 ]
 
+FORMULAIC_ALPHA_COLUMNS: List[str] = [
+    'alpha_001', 'alpha_002', 'alpha_003', 'alpha_004', 'alpha_005', 'alpha_006',
+    'alpha_012', 'alpha_014', 'alpha_041', 'alpha_053', 'alpha_054', 'alpha_101',
+]
+
+EXTENDED_FEATURE_COLUMNS: List[str] = FEATURE_COLUMNS + FORMULAIC_ALPHA_COLUMNS
+
+
 _MARKET_OPEN_HOUR = 9
 _MARKET_OPEN_MIN = 30
 _MARKET_CLOSE_HOUR = 16
@@ -318,6 +326,7 @@ def compute_features(
     bars_20m: pd.DataFrame,
     spy_20m: Optional[pd.DataFrame] = None,
     tz: str = 'America/New_York',
+    include_alphas: bool = False,
 ) -> pd.DataFrame:
     """Compute the full 31-feature matrix for V3+.
 
@@ -511,8 +520,16 @@ def compute_features(
                      'idiosyncratic_alpha_3', 'spy_vwap_dev_atr', 'spy_vol_regime_ratio']:
             feat[col] = 0.0
 
+    if include_alphas:
+        from formulaic_alphas import compute_all_alphas
+        alphas = compute_all_alphas(df)
+        feat = pd.concat([feat, alphas], axis=1)
+        target_cols = EXTENDED_FEATURE_COLUMNS
+    else:
+        target_cols = FEATURE_COLUMNS
+
     # --- Ensure exact column order ---
-    feat = feat.reindex(columns=FEATURE_COLUMNS)
+    feat = feat.reindex(columns=target_cols)
 
     # --- Drop rows with NaN (warm-up period) ---
     feat = feat.dropna()

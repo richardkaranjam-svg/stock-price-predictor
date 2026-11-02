@@ -9,10 +9,13 @@ probabilities, ATR barriers, EV value, and timestamps.
 
 Resolves Gap 2 (Issue #3) and Tweak 5 (Issue #16).
 """
+import hashlib
 import json
+import os
 import time
 import threading
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -22,14 +25,115 @@ import pandas as pd
 
 import quant_core
 from data_loader import download_intraday_data, download_spy_intraday, create_features, get_news_summary
+from db_migration import log_signal
 
 MODEL_PATH = Path(__file__).resolve().parent / 'stock_price_model.pkl'
 METADATA_PATH = Path(__file__).resolve().parent / 'model_metadata.json'
+DB_PATH = Path(__file__).resolve().parent / 'paper_trades.db'
+
 DATA_CACHE_TTL_SECONDS = 1200
 _data_cache: dict = {}
 _data_cache_lock = threading.Lock()
 _model_cache: dict = {}
 _model_cache_lock = threading.Lock()
+
+
+def check_library_versions(env_versions: Optional[Dict[str, str]] = None) -> None:
+    """Validate that training and serving library versions match on MAJOR and MINOR.
+
+    Fails with RuntimeError when MAJOR or MINOR versions of scikit-learn or lightgbm
+    differ, unless env var ALLOW_VERSION_MISMATCH=1 is set.
+    """
+    if os.environ.get('ALLOW_VERSION_MISMATCH') == '1':
+        return
+
+    if env_versions is None:
+        meta = _load_metadata()
+        env_versions = meta.get('env_versions', {})
+        if not env_versions and MODEL_PATH.exists():
+            try:
+                raw = joblib.load(MODEL_PATH)
+                if isinstance(raw, dict):
+                    env_versions = raw.get('env_versions', {})
+            except Exception:
+                pass
+
+    if not env_versions:
+        return
+
+    import sklearn
+    import lightgbm as lgb
+    local_versions = {
+        'scikit-learn': sklearn.__version__,
+        'sklearn': sklearn.__version__,
+        'lightgbm': lgb.__version__,
+    }
+
+    def _parse_major_minor(v_str: str) -> tuple[int, int]:
+        try:
+            from packaging.version import Version
+            v = Version(str(v_str))
+            return (v.major, v.minor)
+        except Exception:
+            parts = str(v_str).split('.')
+            major = int(''.join(filter(str.isdigit, parts[0]))) if parts else 0
+            minor = int(''.join(filter(str.isdigit, parts[1]))) if len(parts) > 1 else 0
+            return (major, minor)
+
+    critical_libs = ['scikit-learn', 'lightgbm']
+    for lib in critical_libs:
+        train_ver = env_versions.get(lib)
+        if not train_ver and lib == 'scikit-learn':
+            train_ver = env_versions.get('sklearn')
+        if not train_ver:
+            continue
+
+        local_ver = local_versions.get(lib)
+        if not local_ver:
+            continue
+
+        train_mm = _parse_major_minor(train_ver)
+        local_mm = _parse_major_minor(local_ver)
+
+        if train_mm != local_mm:
+            raise RuntimeError(
+                f"Version mismatch for {lib}: model was trained with {lib}=={train_ver} "
+                f"(major.minor={train_mm[0]}.{train_mm[1]}), but serving environment has "
+                f"{lib}=={local_ver} (major.minor={local_mm[0]}.{local_mm[1]}). "
+                f"Major or minor versions differ. Retrain the model in the current environment "
+                f"or set ALLOW_VERSION_MISMATCH=1 to bypass."
+            )
+
+    np_train = env_versions.get('numpy')
+    if np_train:
+        np_local = np.__version__
+        if _parse_major_minor(np_train) != _parse_major_minor(np_local):
+            warnings.warn(
+                f"Version mismatch for numpy: trained={np_train}, local={np_local}",
+                UserWarning,
+            )
+
+
+def compute_features_hash(features: Any) -> str:
+    """Compute a deterministic SHA-256 hash for feature vectors or inputs."""
+    if features is None:
+        return ""
+    try:
+        if isinstance(features, pd.DataFrame):
+            sorted_df = features[sorted(features.columns)]
+            content = sorted_df.to_json(orient='split').encode('utf-8')
+        elif isinstance(features, pd.Series):
+            sorted_s = features.sort_index()
+            content = sorted_s.to_json(orient='split').encode('utf-8')
+        elif isinstance(features, np.ndarray):
+            content = features.tobytes()
+        elif isinstance(features, dict):
+            content = json.dumps(features, sort_keys=True, default=str).encode('utf-8')
+        else:
+            content = str(features).encode('utf-8')
+    except Exception:
+        content = str(features).encode('utf-8')
+    return hashlib.sha256(content).hexdigest()
 
 
 def _load_model() -> Any:
@@ -41,19 +145,23 @@ def _load_model() -> Any:
         mtime = MODEL_PATH.stat().st_mtime if MODEL_PATH.exists() else 0
         cached = _model_cache.get('model')
         if cached and cached[0] == mtime:
+            if len(cached) > 2 and cached[2] is not None:
+                train_versions = cached[2].get('env_versions') if isinstance(cached[2], dict) else None
+                check_library_versions(train_versions)
             return cached[1]
 
     raw = joblib.load(MODEL_PATH)
 
     if isinstance(raw, dict):
-        # V3+ plain-dict artifact → wrap in DictModelAdapter
+        check_library_versions(raw.get('env_versions'))
         model = quant_core.DictModelAdapter(raw)
     else:
-        # V2 legacy EnsembleModel — use as-is
+        meta = _load_metadata()
+        check_library_versions(meta.get('env_versions'))
         model = raw
 
     with _model_cache_lock:
-        _model_cache['model'] = (mtime, model)
+        _model_cache['model'] = (mtime, model, raw)
     return model
 
 
@@ -113,6 +221,7 @@ def predict_v3(ticker: str = 'AAPL') -> Dict[str, Any]:
         - bar_open_et: str
         - bar_close_et: str
         - news: dict
+        - features_hash: str
     """
     model = _load_model()
     metadata = _load_metadata()
@@ -212,6 +321,27 @@ def predict_v3(ticker: str = 'AAPL') -> Dict[str, Any]:
     predicted_return = 0.002 if predicted_class == 1 else (-0.002 if predicted_class == -1 else 0.0)
     predicted_price = current_price * (1 + predicted_return)
 
+    features_hash = compute_features_hash(latest_features)
+    side = 'long' if predicted_class == 1 else ('short' if predicted_class == -1 else 'flat')
+    model_version = metadata.get('model_version', 'V3+')
+
+    # --- Log signal to SQLite table signals ---
+    try:
+        log_signal(
+            conn_or_path=DB_PATH,
+            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            ticker=ticker,
+            model_version=model_version,
+            side=side,
+            confidence=confidence,
+            price=current_price,
+            features_hash=features_hash,
+            outcome=None,
+            source='predict',
+        )
+    except Exception as e:
+        warnings.warn(f"Could not log signal to SQLite: {e}", UserWarning)
+
     return {
         'predicted_class': predicted_class,
         'confidence': confidence,
@@ -226,7 +356,9 @@ def predict_v3(ticker: str = 'AAPL') -> Dict[str, Any]:
         'bar_open_et': bar_open_et,
         'bar_close_et': bar_close_et,
         'news': news,
-        'model_version': metadata.get('model_version', 'V2'),
+        'model_version': model_version,
+        'features_hash': features_hash,
+        'side': side,
     }
 
 

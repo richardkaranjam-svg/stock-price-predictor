@@ -30,8 +30,8 @@ from broker import (
 )
 from config import is_market_open, is_high_signal_window
 from data_loader import create_features, download_intraday_data, download_spy_intraday, get_news_summary
-from predict import get_latest_stock_data, predict_v3
-from db_migration import migrate_paper_trades_schema
+from predict import get_latest_stock_data, predict_v3, check_library_versions
+from db_migration import migrate_paper_trades_schema, migrate_signals_schema, log_signal
 import quant_core
 
 DB_PATH = Path(__file__).resolve().parent / 'paper_trades.db'
@@ -96,6 +96,7 @@ class PaperTrader:
                 conn.execute('ALTER TABLE paper_trades ADD COLUMN slippage REAL')
             # V3+ schema migration
             migrate_paper_trades_schema(conn)
+            migrate_signals_schema(conn)
 
             conn.execute('''CREATE TABLE IF NOT EXISTS account_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,7 +107,13 @@ class PaperTrader:
             )''')
 
     def _check_env_versions(self):
-        """Compare local library versions against artifact's env_versions (Tweak 5)."""
+        """Compare local library versions against artifact's env_versions (Tweak 5).
+
+        Uses the same MAJOR.MINOR rule as predict.check_library_versions. At
+        startup a mismatch is only logged (so the trader/app can still boot);
+        predict_v3 itself refuses to run until the model is retrained or
+        ALLOW_VERSION_MISMATCH=1 is set.
+        """
         if not MODEL_PATH.exists():
             return
         try:
@@ -116,29 +123,50 @@ class PaperTrader:
             train_versions = raw.get('env_versions', {})
             if not train_versions:
                 return
-
-            import sklearn
-            import lightgbm as lgb
-            local_versions = {
-                'numpy': np.__version__,
-                'scikit-learn': sklearn.__version__,
-                'lightgbm': lgb.__version__,
-            }
-            for lib, train_ver in train_versions.items():
-                local_ver = local_versions.get(lib)
-                if local_ver and local_ver != train_ver:
-                    logger.warning(
-                        f"⚠ Version mismatch for {lib}: trained={train_ver}, local={local_ver}"
-                    )
+            check_library_versions(train_versions)
+        except RuntimeError as e:
+            logger.error(f"Model/library version mismatch - predictions will be refused: {e}")
         except Exception as e:
             logger.warning(f"Could not verify env_versions: {e}")
+
+    # Reasons whose buy/sell orders close an existing position (not new signals).
+    _EXIT_REASON_PREFIXES = (
+        'DYNAMIC_ATR_TAKE_PROFIT', 'DYNAMIC_ATR_STOP_LOSS',
+        'EOD_1545_AUTO_FLATTEN', 'close_before_',
+    )
+
+    @classmethod
+    def _action_to_side(cls, action: str, reason: Optional[str] = None,
+                        error: Optional[str] = None) -> str:
+        """Map a PaperTrader action to a signals.side value.
+
+        - 'long' / 'short': a new directional entry decision
+        - 'flat': a deliberate hold decision
+        - 'exit': an order that closes an existing position
+        - 'none': non-decisions (market_closed, kill switch, ratchet, errors)
+        Only long/short/flat rows are scored by fill_signal_outcomes.
+        """
+        act = str(action).lower()
+        if error:
+            return 'none'
+        if act.startswith('eod_flatten'):
+            return 'exit'
+        if act in ('buy', 'sell'):
+            if reason and str(reason).startswith(cls._EXIT_REASON_PREFIXES):
+                return 'exit'
+            return 'long' if act == 'buy' else 'short'
+        if act == 'hold':
+            return 'flat'
+        return 'none'
 
     def _record(self, ticker, action, predicted_return=None, current_price=None,
                 order_id=None, order_status=None, error=None, reason=None,
                 fill_price=None, slippage=None,
                 atr_at_entry=None, ev_atr_value=None,
                 take_profit_price=None, stop_loss_price=None,
-                ratchet_triggered=0, confidence=None, model_version='V3+'):
+                ratchet_triggered=0, confidence=None, model_version='V3+',
+                features_hash=None, side=None):
+        now_iso = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
                 '''INSERT INTO paper_trades
@@ -147,12 +175,30 @@ class PaperTrader:
                  atr_at_entry, ev_atr_value, take_profit_price, stop_loss_price,
                  ratchet_triggered, confidence, model_version)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                (datetime.now(timezone.utc).isoformat(), ticker, action,
+                (now_iso, ticker, action,
                  predicted_return, current_price, order_id, order_status,
                  error, reason, fill_price, slippage,
                  atr_at_entry, ev_atr_value, take_profit_price, stop_loss_price,
                  ratchet_triggered, confidence, model_version),
             )
+            try:
+                side_val = side or self._action_to_side(action, reason=reason, error=error)
+                price_val = current_price if current_price is not None else fill_price
+                log_signal(
+                    conn_or_path=conn,
+                    timestamp_utc=now_iso,
+                    ticker=ticker,
+                    model_version=model_version,
+                    side=side_val,
+                    confidence=confidence,
+                    price=price_val,
+                    features_hash=features_hash,
+                    outcome=None,
+                    source='trader',
+                    action=str(action),
+                )
+            except Exception as e:
+                logger.warning(f"Could not log signal to signals table: {e}")
 
     def _record_account_snapshot(self):
         account = get_paper_account()
@@ -305,6 +351,7 @@ class PaperTrader:
         ev_atr_value = pred['ev_atr_value']
         tp_price = pred['take_profit_price']
         sl_price = pred['stop_loss_price']
+        features_hash = pred.get('features_hash')
 
         position = self._get_position(ticker)
         position_qty = position['qty']
@@ -332,6 +379,7 @@ class PaperTrader:
                     reason='RATCHET_1R_BREAKEVEN',
                     atr_at_entry=self._entry_atr, ratchet_triggered=1,
                     take_profit_price=self._tp_price, stop_loss_price=self._sl_price,
+                    features_hash=features_hash,
                 )
 
             # --- Check TP ---
@@ -358,6 +406,7 @@ class PaperTrader:
                         fill_price=fill_price, atr_at_entry=self._entry_atr,
                         take_profit_price=self._tp_price, stop_loss_price=self._sl_price,
                         ratchet_triggered=int(self._ratchet_triggered), confidence=confidence,
+                        features_hash=features_hash,
                     )
                     self._entry_price = None
                     self._entry_atr = None
@@ -383,6 +432,7 @@ class PaperTrader:
                         fill_price=fill_price, atr_at_entry=self._entry_atr,
                         take_profit_price=self._tp_price, stop_loss_price=self._sl_price,
                         ratchet_triggered=int(self._ratchet_triggered), confidence=confidence,
+                        features_hash=features_hash,
                     )
                     self._entry_price = None
                     self._entry_atr = None
@@ -401,20 +451,21 @@ class PaperTrader:
         # Entry cutoff after 15:30 ET
         if entry_blocked:
             self._record(ticker, 'hold', current_price=current_price,
-                         reason='ENTRY_BLOCKED_AFTER_1530', confidence=confidence)
+                         reason='ENTRY_BLOCKED_AFTER_1530', confidence=confidence, features_hash=features_hash)
             return {'action': 'hold', 'reason': 'entry blocked after 15:30 ET'}
 
         # Confidence gate
         if confidence < MIN_CONFIDENCE:
             self._record(ticker, 'hold', current_price=current_price,
-                         reason=f'LOW_CONFIDENCE_{confidence:.0%}', confidence=confidence)
+                         reason=f'LOW_CONFIDENCE_{confidence:.0%}', confidence=confidence, features_hash=features_hash)
             return {'action': 'hold', 'reason': f'confidence {confidence:.0%} < {MIN_CONFIDENCE:.0%}'}
 
         # EV gate
         if predicted_class != 0 and ev_atr_value <= 0:
             self._record(ticker, 'hold', current_price=current_price,
                          reason='EV_GATE_REJECTED', confidence=confidence,
-                         ev_atr_value=ev_atr_value, atr_at_entry=atr_at_entry)
+                         ev_atr_value=ev_atr_value, atr_at_entry=atr_at_entry,
+                         features_hash=features_hash)
             return {'action': 'hold', 'reason': f'EV_GATE_REJECTED (EV={ev_atr_value:.4f})'}
 
         # --- Determine action ---
@@ -459,6 +510,7 @@ class PaperTrader:
                         ticker, 'hold', current_price=current_price,
                         reason='SHORT_GUARD_BLOCKED', confidence=confidence,
                         ev_atr_value=ev_atr_value, atr_at_entry=atr_at_entry,
+                        features_hash=features_hash,
                     )
                     return {
                         'action': 'hold',
@@ -472,6 +524,7 @@ class PaperTrader:
                     self._record(
                         ticker, 'hold', current_price=current_price,
                         reason='SHORT_GUARD_BLOCKED', confidence=confidence,
+                        features_hash=features_hash,
                     )
                     return {
                         'action': 'hold',
@@ -491,7 +544,8 @@ class PaperTrader:
         if action == 'hold':
             self._record(ticker, action, current_price=current_price,
                          reason=reason, confidence=confidence,
-                         ev_atr_value=ev_atr_value, atr_at_entry=atr_at_entry)
+                         ev_atr_value=ev_atr_value, atr_at_entry=atr_at_entry,
+                         features_hash=features_hash)
             return {'action': action, 'reason': reason,
                     'performance': self._record_account_snapshot()}
 
@@ -552,6 +606,7 @@ class PaperTrader:
                 confidence=confidence, ev_atr_value=ev_atr_value,
                 atr_at_entry=atr_at_entry,
                 take_profit_price=self._tp_price, stop_loss_price=self._sl_price,
+                features_hash=features_hash,
             )
             return {
                 'action': action, 'reason': reason,

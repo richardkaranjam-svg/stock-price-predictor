@@ -38,7 +38,6 @@ compute_chop_rate_v2_archived.py
 eda.py
 ingest_news.py
 lstm_model.py
-requirements-kaggle.txt
 requirements-lstm.txt
 stock_price_model_old.pkl
 stock_price_model_v2.pkl
@@ -47,3 +46,8 @@ register_task.ps1
 run_silent.vbs
 start_server.bat
 stop_server.bat
+
+# External projects & deliverables
+Eddy project/
+*.zip
+scratch/

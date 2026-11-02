@@ -1,0 +1,49 @@
+{
+  "verdict": "FAIL",
+  "reasons": [
+    "n_trades (75) < 100",
+    "profit_factor (0.76) < 1.0",
+    "expectancy (-62.62) <= 0.0"
+  ],
+  "generated_at": "2026-11-02T20:50:07.900216+00:00",
+  "metrics": {
+    "n_trades": 75,
+    "trades_per_day": 0.06,
+    "win_rate": 0.4,
+    "avg_win": 484.08,
+    "avg_loss": -427.09,
+    "expectancy": -62.62,
+    "expectancy_usd": -62.62,
+    "expectancy_r": -0.1,
+    "profit_factor": 0.76,
+    "net_pnl": -4696.73,
+    "max_drawdown_pct": 6.91,
+    "sharpe": -0.52,
+    "gross_win": 14522.43,
+    "gross_loss": 19219.16,
+    "total_costs": 0.0,
+    "per_ticker": {
+      "CUSTOM_STRATEGY": {
+        "n_trades": 75,
+        "trades_per_day": 0.06,
+        "win_rate": 0.4,
+        "avg_win": 484.08,
+        "avg_loss": -427.09,
+        "expectancy": -62.62,
+        "expectancy_usd": -62.62,
+        "expectancy_r": -0.1,
+        "profit_factor": 0.76,
+        "net_pnl": -4696.73,
+        "max_drawdown_pct": 6.91,
+        "sharpe": -0.52,
+        "gross_win": 14522.43,
+        "gross_loss": 19219.16,
+        "total_costs": 0.0
+      }
+    },
+    "psr": 0.1408944765164873,
+    "dsr": 1.5610952288776434e-05,
+    "var_95_pct": 0.6596585457404586,
+    "cvar_95_pct": 0.6916490433615856
+  }
+}

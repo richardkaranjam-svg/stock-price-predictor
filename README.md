@@ -26,24 +26,32 @@ The V3+ engine replaces naive single-step regression with a path-aware, calibrat
 ## 🛠️ Project Structure
 
 ```text
-├── quant_core.py             # Deliverable A: Core math, fracdiff, feature extraction, calibration
-├── colab_cloud_trainer.py    # Deliverable B: Cloud 10-year walk-forward CV trainer (Google Colab)
+├── quant_core.py             # Core math, fracdiff, 31/43 feature extraction, calibration
+├── formulaic_alphas.py       # WorldQuant 101 Formulaic Alphas engine & Rank IC evaluation
+├── quant_stats.py            # Deflated Sharpe Ratio (DSR), PSR, 95% VaR & CVaR risk engine
+├── audit_strategy.py         # Universal trade log auditor & dark-mode HTML factsheet generator
+├── benchmark_strategies.py   # Trend Breakout, Mean Reversion, Multi-Alpha benchmark portfolios
+├── simulate_session.py       # 19-bar intraday trading session & signal lifecycle simulator
+├── colab_cloud_trainer.py    # Walk-forward CV cloud trainer with V4 Alpha support
 ├── data_loader.py            # Alpaca SIP / real-time bar fetching & feature preparation
 ├── broker.py                 # Alpaca paper trading client with short-selling & margin guards
 ├── auto_trader.py            # Autonomous trading engine with risk guards and dynamic stops
 ├── predict.py                # V3+ calibrated inference engine using dict model artifact
 ├── app.py                    # Flask web dashboard and REST API
 ├── config.py                 # Market-hours guards and configuration utilities
-├── db_migration.py           # SQLite schema migration utility
-├── ensemble.py               # Backward-compatible shim for DictModelAdapter
-├── news_client.py            # MarketAux headline sentiment ingestion and rate limiter
-├── train_model.py            # Protective deprecation guard against local 780-bar overwrites
+├── db_migration.py           # SQLite schema migration utility & signals persistence
+├── PITCH_AND_INTAKE_GUIDE.md # Client strategy intake, pitching & audit presentation guide
 ├── stock_price_model.pkl     # Trained V3+ model artifact (plain dictionary)
-├── model_metadata.json       # V3+ ensemble hyperparameters and OOS validation metrics
-├── test_quant_invariants.py  # 12-test invariant verification test suite
-├── tests/
-│   ├── test_colab_trainer.py # 37 unit tests for cloud trainer and labeling math
-│   └── test_pipeline.py      # Integration and regression tests
+├── model_metadata.json       # Ensemble hyperparameters and validation metrics
+├── test_quant_invariants.py  # Invariant verification test suite
+├── tests/                    # 114 passing unit and integration tests across 7 test suites
+│   ├── test_simulate_session.py
+│   ├── test_audit_strategy.py
+│   ├── test_version_and_signals.py
+│   ├── test_formulaic_alphas.py
+│   ├── test_quant_stats.py
+│   ├── test_colab_trainer.py
+│   └── test_pipeline.py
 ├── templates/
 │   └── index.html            # Dashboard HTML
 ├── static/
@@ -103,9 +111,14 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000) to view:
 
 ### Model Training (Google Colab)
 Local short-sample training is disabled to protect against lookahead bias and model wipeouts. To retrain the 10-year model:
-1. Open Google Colab with Python 3.10+.
-2. Upload `colab_cloud_trainer.py`.
-3. Set your Alpaca API credentials in Colab secrets or environment variables.
+1. Open Google Colab with Python 3.11+ (check with `!python --version`).
+2. Upload `colab_cloud_trainer.py` and `quant_core.py`.
+3. Install the exact versions the server uses (see `requirements.txt`) and then **restart the runtime**:
+   `!pip install -q numpy==2.4.6 pandas==3.0.3 scikit-learn==1.9.0 joblib==1.5.3 lightgbm==4.7.0 "alpaca-py>=0.40,<1" pytz`
+   pip may print dependency-resolver warnings about `google-colab` (pandas) and `numba` (numpy). They are harmless for training, which uses neither.
+4. After the restart, verify `numpy/pandas/sklearn/lightgbm` print `2.4.6 / 3.0.3 / 1.9.0 / 4.7.0` before training.
+5. Set your Alpaca API credentials in Colab secrets or environment variables.
+6. The server refuses models whose scikit-learn/lightgbm major.minor differ from the local install. Set `ALLOW_VERSION_MISMATCH=1` only as a temporary bypass.
 4. Run the script to execute walk-forward cross-validation and download the exported `stock_price_model.pkl` and `model_metadata.json`.
 
 ---

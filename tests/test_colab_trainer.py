@@ -478,3 +478,30 @@ def test_predict_v3_runs_on_real_artifact(trained_artifact, monkeypatch, tmp_pat
     assert sum(result['probabilities'].values()) == pytest.approx(1.0)
     assert result['model_version'] == 'V3+'
     assert result['atr_at_entry'] > 0
+
+
+def test_train_v4_alpha_model_and_predict(monkeypatch):
+    """Verify that train_v3_model trains on 43 extended alpha features and produces a V4 artifact."""
+    rng = np.random.default_rng(42)
+    n = 600
+    cols = list(quant_core.EXTENDED_FEATURE_COLUMNS)
+    assert len(cols) == 43
+    X = pd.DataFrame(rng.normal(size=(n, len(cols))), columns=cols)
+    labels = rng.choice([-1, 0, 1], size=n, p=[0.3, 0.4, 0.3])
+    t1 = np.minimum(np.arange(n) + 6, n - 1)
+    u = quant_core.compute_vectorized_uniqueness(t1)
+
+    monkeypatch.setitem(cct.LGB_PARAMS, 'n_estimators', 10)
+    monkeypatch.setitem(cct.LGB_PARAMS, 'min_child_samples', 5)
+    monkeypatch.setitem(cct.RF_PARAMS, 'n_estimators', 5)
+    monkeypatch.setitem(cct.RF_PARAMS, 'n_jobs', 1)
+
+    artifact, metrics = cct.train_v3_model(X, labels, t1, u)
+    assert artifact['model_version'] == 'V4-Alpha'
+    assert artifact['feature_columns'] == quant_core.EXTENDED_FEATURE_COLUMNS
+
+    adapter = quant_core.DictModelAdapter(artifact)
+    proba = adapter.predict_proba(X.iloc[:5])
+    assert proba.shape == (5, 3)
+    np.testing.assert_allclose(proba.sum(axis=1), 1.0)
+    assert set(adapter.predict(X.iloc[:5])) <= {-1, 0, 1}

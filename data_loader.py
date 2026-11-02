@@ -113,7 +113,7 @@ def download_intraday_data(
     hist_start = now - timedelta(days=warmup_days)
     hist_end = now - timedelta(minutes=16)
 
-    print(f"📡 Fetching {ticker} 5-min bars from Alpaca ({warmup_days}d warm-up)...")
+    print(f"[INFO] Fetching {ticker} 5-min bars from Alpaca ({warmup_days}d warm-up)...")
     all_bars = []
 
     for feed in [DataFeed.SIP, DataFeed.IEX]:
@@ -141,9 +141,9 @@ def download_intraday_data(
                 break
         except Exception as e:
             if feed == DataFeed.SIP:
-                print(f"  ⚠ SIP warm-up failed ({e}), trying IEX...")
+                print(f"  [WARN] SIP warm-up failed ({e}), trying IEX...")
             else:
-                print(f"  ⚠ IEX warm-up also failed: {e}")
+                print(f"  [WARN] IEX warm-up also failed: {e}")
 
     # --- Part 2: Recent tail via SIP (with IEX fallback) ---
     recent_start = hist_end
@@ -173,9 +173,9 @@ def download_intraday_data(
             break
         except Exception as e:
             if feed == DataFeed.SIP:
-                print(f"  ⚠ SIP recent tail failed ({e}), falling back to IEX...")
+                print(f"  [WARN] SIP recent tail failed ({e}), falling back to IEX...")
             else:
-                print(f"  ⚠ IEX fallback also failed: {e}")
+                print(f"  [WARN] IEX fallback also failed: {e}")
 
     if not all_bars:
         raise RuntimeError(f"No data received from Alpaca for {ticker}.")
@@ -207,7 +207,7 @@ def download_spy_intraday(warmup_days: int = 25) -> pd.DataFrame:
     try:
         return download_intraday_data('SPY', warmup_days=warmup_days)
     except Exception as e:
-        print(f"  ⚠ SPY data unavailable ({e}), SPY features will be zeroed")
+        print(f"  [WARN] SPY data unavailable ({e}), SPY features will be zeroed")
         return pd.DataFrame()
 
 

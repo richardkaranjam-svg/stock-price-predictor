@@ -907,7 +907,12 @@ def train_v3_model(
     if not np.isfinite(X).all():
         raise ValueError("Feature matrix contains NaN/inf — compute_features() "
                          "warm-up rows must be dropped before training.")
-    if list(features.columns) != list(quant_core.FEATURE_COLUMNS):
+    expected_cols = (
+        list(quant_core.EXTENDED_FEATURE_COLUMNS)
+        if len(features.columns) == len(quant_core.EXTENDED_FEATURE_COLUMNS)
+        else list(quant_core.FEATURE_COLUMNS)
+    )
+    if list(features.columns) != expected_cols:
         raise ValueError("Feature columns/order differ from quant_core.FEATURE_COLUMNS.")
 
     cv = PurgedWalkForwardCV(n_splits=N_CV_FOLDS, embargo_bars=EMBARGO_BARS)
@@ -1178,12 +1183,12 @@ def train_v3_model(
     }
 
     artifact = {
-        'model_version': 'V3+',
+        'model_version': 'V4-Alpha' if len(features.columns) == len(quant_core.EXTENDED_FEATURE_COLUMNS) else 'V3+',
         'lgb_model_str': lgb_model_str,
         'rf_model': final_rf,
         'calib_coef': final_calib_coef.tolist(),
         'calib_intercept': final_calib_intercept.tolist(),
-        'feature_columns': list(quant_core.FEATURE_COLUMNS),
+        'feature_columns': list(features.columns),
         'config': {
             'ticker': TICKER,
             'benchmark': BENCHMARK,
@@ -1280,8 +1285,10 @@ def main():
         print(f"  AAPL: {len(aapl_20m)} bars, SPY: 0 bars (SPY features zero-filled)")
 
     # --- Step 3: Compute features ---
-    print("\n🔧 Step 3: Computing 31 V3+ features...")
-    features = quant_core.compute_features(aapl_20m, spy_20m)
+    include_alphas = os.environ.get('INCLUDE_ALPHAS', '0').strip().lower() in ('1', 'true', 'yes')
+    n_feat_desc = "43 V4 (including 12 Formulaic Alphas)" if include_alphas else "31 V3+"
+    print(f"\n🔧 Step 3: Computing {n_feat_desc} features...")
+    features = quant_core.compute_features(aapl_20m, spy_20m, include_alphas=include_alphas)
     print(f"  Feature matrix: {features.shape}")
 
     # --- Step 4: Triple-barrier labeling ---
@@ -1347,14 +1354,16 @@ def main():
 
     # --- Step 7: Export ---
     print("\n💾 Step 7: Exporting artifact...")
-    joblib.dump(artifact, 'stock_price_model.pkl', compress=3)
-    pkl_size = os.path.getsize('stock_price_model.pkl') / 1024
-    print(f"  stock_price_model.pkl: {pkl_size:.0f} KB")
+    out_model_path = os.environ.get('MODEL_OUTPUT_PATH', 'stock_price_model.pkl')
+    out_metadata_path = os.environ.get('METADATA_OUTPUT_PATH', 'model_metadata.json')
+    joblib.dump(artifact, out_model_path, compress=3)
+    pkl_size = os.path.getsize(out_model_path) / 1024
+    print(f"  {out_model_path}: {pkl_size:.0f} KB")
 
     metadata = {
         'ticker': TICKER,
-        'model_type': 'LightGBM_RandomForest_Ensemble_V3+',
-        'model_version': 'V3+',
+        'model_type': 'LightGBM_RandomForest_Ensemble_V4_Alpha' if include_alphas else 'LightGBM_RandomForest_Ensemble_V3+',
+        'model_version': artifact.get('model_version', 'V3+'),
         'interval': '20m',
         'horizon_bars': MAX_HORIZON_BARS,
         'labeling': 'ATR_triple_barrier_symmetric',
@@ -1367,20 +1376,21 @@ def main():
         'training_start': str(features.index[0].date()) if len(features) > 0 else None,
         'training_end': str(features.index[-1].date()) if len(features) > 0 else None,
         'training_bars': len(features),
-        'features': list(quant_core.FEATURE_COLUMNS),
+        'features': list(features.columns),
         'news_training_source': None,
+        'env_versions': artifact.get('env_versions', {}),
         'metrics': metrics,
     }
 
-    with open('model_metadata.json', 'w') as f:
+    with open(out_metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2, default=str)
-    print("  model_metadata.json: saved")
+    print(f"  {out_metadata_path}: saved")
 
     # --- Auto-download in Colab ---
     try:
         from google.colab import files
-        files.download('stock_price_model.pkl')
-        files.download('model_metadata.json')
+        files.download(out_model_path)
+        files.download(out_metadata_path)
         print("\n📥 Files downloaded to your browser!")
     except ImportError:
         print("\n📁 Files saved to current directory. Copy to your local project.")
