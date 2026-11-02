@@ -30,8 +30,10 @@ The V3+ engine replaces naive single-step regression with a path-aware, calibrat
 ├── formulaic_alphas.py       # WorldQuant 101 Formulaic Alphas engine & Rank IC evaluation
 ├── quant_stats.py            # Deflated Sharpe Ratio (DSR), PSR, 95% VaR & CVaR risk engine
 ├── audit_strategy.py         # Universal trade log auditor & dark-mode HTML factsheet generator
+├── meta_label_optimizer.py   # ML confidence hurdle optimization & comparative equity curve
 ├── benchmark_strategies.py   # Trend Breakout, Mean Reversion, Multi-Alpha benchmark portfolios
 ├── simulate_session.py       # 19-bar intraday trading session & signal lifecycle simulator
+├── fetch_bars.py             # Client signals CSV intake & Alpaca historical bar streaming
 ├── colab_cloud_trainer.py    # Walk-forward CV cloud trainer with V4 Alpha support
 ├── data_loader.py            # Alpaca SIP / real-time bar fetching & feature preparation
 ├── broker.py                 # Alpaca paper trading client with short-selling & margin guards
@@ -44,13 +46,17 @@ The V3+ engine replaces naive single-step regression with a path-aware, calibrat
 ├── stock_price_model.pkl     # Trained V3+ model artifact (plain dictionary)
 ├── model_metadata.json       # Ensemble hyperparameters and validation metrics
 ├── test_quant_invariants.py  # Invariant verification test suite
-├── tests/                    # 114 passing unit and integration tests across 7 test suites
+├── tests/                    # 120 passing unit and integration tests across 11 test suites
 │   ├── test_simulate_session.py
 │   ├── test_audit_strategy.py
+│   ├── test_meta_label_optimizer.py
+│   ├── test_benchmark_strategies.py
 │   ├── test_version_and_signals.py
 │   ├── test_formulaic_alphas.py
 │   ├── test_quant_stats.py
+│   ├── test_fetch_bars.py
 │   ├── test_colab_trainer.py
+│   ├── test_backtest_report.py
 │   └── test_pipeline.py
 ├── templates/
 │   └── index.html            # Dashboard HTML
@@ -108,6 +114,30 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000) to view:
 - Current market-hours state
 - Alpaca paper account equity and position
 - Autonomous trading controls and trade execution history
+
+### Client Strategy Audit & Institutional Factsheet
+```bash
+python audit_strategy.py --csv path/to/client_trades.csv --out reports/client_audit
+```
+Parses trade logs from TradingView, MT4/MT5, Interactive Brokers, NinjaTrader, or TradeStation. Computes Deflated Sharpe Ratio (DSR), Probabilistic Sharpe Ratio (PSR), 95% VaR/CVaR, and produces an interactive dark-mode HTML factsheet.
+
+### ML Meta-Labeling Threshold Optimization
+```bash
+python meta_label_optimizer.py --csv path/to/trades_with_conf.csv --out reports/meta_labeled
+```
+Sweeps confidence thresholds to filter low-probability trades, maximizing Profit Factor and Net PnL while maintaining statistical significance ($N \ge 100$). Generates comparative before/after equity curves.
+
+### WorldQuant Multi-Alpha Portfolio Optimization
+```bash
+python formulaic_alphas.py --optimize-portfolio
+```
+Calculates Spearman Rank Information Coefficients across multi-horizon forward returns ($h=1,3,5,10$) for 12 Kakushadze alphas and computes optimal multi-factor weights.
+
+### Client Signal Bar Streaming & Risk Simulation
+```bash
+python fetch_bars.py --signals path/to/signals.csv --out cache/bars --run reports/client_run
+```
+Streams 20-minute historical bars from Alpaca for raw customer entry signals and executes the full ATR risk stop and ratchet backtest simulation.
 
 ### Model Training (Google Colab)
 Local short-sample training is disabled to protect against lookahead bias and model wipeouts. To retrain the 10-year model:
