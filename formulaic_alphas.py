@@ -228,7 +228,11 @@ def compute_all_alphas(df: pd.DataFrame) -> pd.DataFrame:
     alphas['alpha_053'] = alpha_053(df)
     alphas['alpha_054'] = alpha_054(df)
     alphas['alpha_101'] = alpha_101(df)
-    return alphas
+    # Rolling correlations on near-constant windows (and 0/0 divisions on flat or
+    # zero-volume bars) can yield +/-inf. Treat them as missing so that
+    # quant_core.compute_features() drops those rows with the other warm-up
+    # NaNs; DataFrame.dropna() alone would let inf through into training.
+    return alphas.replace([np.inf, -np.inf], np.nan)
 
 
 def combine_alphas(

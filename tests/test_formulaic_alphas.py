@@ -218,3 +218,38 @@ def test_rank_is_trailing_percentile():
     # Newest value is the min of its window -> rank 1/10
     assert r_desc.iloc[9:].round(6).eq(0.1).all()
 
+def test_alphas_never_emit_infinite_values():
+    """Flat bars / zero-volume bars used to give +/-inf, which dropna() keeps and
+    the trainer rejects ("Feature matrix contains NaN/inf")."""
+    rng = np.random.default_rng(5)
+    n = 600
+    close = pd.Series(100 + rng.normal(0, 0.5, n).cumsum())
+    df = pd.DataFrame({
+        'Open': close, 'High': close + 0.2, 'Low': close - 0.2, 'Close': close,
+        'Volume': rng.integers(1_000, 5_000, n).astype(float),
+    })
+    df['VWAP'] = df['Close']
+    # A long run of constant Open and zero Volume makes rolling correlations 0/0.
+    df.loc[200:260, 'Open'] = 100.0
+    df.loc[200:260, 'Volume'] = 0.0
+    # Flat bars (O == H == L == C) and a close exactly at the low.
+    for col in ('Open', 'High', 'Low'):
+        df.loc[300:305, col] = df.loc[300:305, 'Close']
+    df.loc[400:405, 'Close'] = df.loc[400:405, 'Low']
+
+    alphas = compute_all_alphas(df)
+    assert not np.isinf(alphas.to_numpy(dtype=float)).any()
+
+
+def test_extended_features_are_finite_after_dropna():
+    """compute_features(include_alphas=True) must return a fully finite matrix."""
+    from quant_core import compute_features
+    from tests.test_pipeline import sample_market_data
+
+    data = sample_market_data(rows=600)
+    # Inject zero-volume + flat-open stretch that previously produced inf alphas.
+    data.iloc[300:360, data.columns.get_loc('Volume')] = 0.0
+    data.iloc[300:360, data.columns.get_loc('Open')] = float(data['Open'].iloc[300])
+    feats = compute_features(data, include_alphas=True)
+    assert len(feats) > 0
+    assert np.isfinite(feats.to_numpy(dtype=float)).all()
