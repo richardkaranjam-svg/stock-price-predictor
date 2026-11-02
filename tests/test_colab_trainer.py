@@ -505,3 +505,49 @@ def test_train_v4_alpha_model_and_predict(monkeypatch):
     assert proba.shape == (5, 3)
     np.testing.assert_allclose(proba.sum(axis=1), 1.0)
     assert set(adapter.predict(X.iloc[:5])) <= {-1, 0, 1}
+
+
+def test_predict_v3_builds_43_features_for_v4_artifact(monkeypatch):
+    """predict_v3 must feed a V4 (43-feature) model the alpha columns it was trained on."""
+    import predict as predict_module
+    from tests.test_pipeline import sample_market_data
+
+    rng = np.random.default_rng(3)
+    n = 600
+    cols = list(quant_core.EXTENDED_FEATURE_COLUMNS)
+    X = pd.DataFrame(rng.normal(size=(n, len(cols))), columns=cols)
+    labels = rng.choice([-1, 0, 1], size=n, p=[0.3, 0.4, 0.3])
+    t1 = np.minimum(np.arange(n) + 6, n - 1)
+    u = quant_core.compute_vectorized_uniqueness(t1)
+
+    monkeypatch.setitem(cct.LGB_PARAMS, 'n_estimators', 10)
+    monkeypatch.setitem(cct.LGB_PARAMS, 'min_child_samples', 5)
+    monkeypatch.setitem(cct.RF_PARAMS, 'n_estimators', 5)
+    monkeypatch.setitem(cct.RF_PARAMS, 'n_jobs', 1)
+    artifact, _ = cct.train_v3_model(X, labels, t1, u)
+    adapter = quant_core.DictModelAdapter(artifact)
+    assert predict_module._model_uses_alphas(adapter) is True
+
+    data = sample_market_data(300)
+    monkeypatch.setattr(predict_module, '_load_model', lambda: adapter)
+    monkeypatch.setattr(predict_module, '_load_metadata', lambda: {'model_version': 'V4-Alpha'})
+    monkeypatch.setattr(predict_module, 'get_latest_stock_data', lambda t: data)
+    monkeypatch.setattr(predict_module, 'download_spy_intraday', lambda: sample_market_data(300))
+    monkeypatch.setattr(predict_module, 'get_news_summary', lambda t: {'sentiment': 0.0})
+    monkeypatch.setattr(predict_module.quant_core, 'filter_closed_bars', lambda d, now_et=None: d)
+    monkeypatch.setattr(predict_module, 'log_signal', lambda **kw: None)
+
+    result = predict_module.predict_v3('AAPL')
+    assert result['predicted_class'] in (-1, 0, 1)
+    assert sum(result['probabilities'].values()) == pytest.approx(1.0)
+
+
+def test_model_uses_alphas_false_for_v3_artifact():
+    import predict as predict_module
+
+    class _V3:
+        feature_columns = list(quant_core.FEATURE_COLUMNS)
+
+    assert predict_module._model_uses_alphas(_V3()) is False
+    assert predict_module._model_uses_alphas(object()) is False
+

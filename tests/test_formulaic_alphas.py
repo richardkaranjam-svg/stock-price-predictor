@@ -28,15 +28,19 @@ from formulaic_alphas import (
 )
 
 
+# Long enough for the 50-bar causal rank window plus nested rolling warm-up.
+N_BARS = 120
+
+
 @pytest.fixture
 def sample_ohlcv_data():
-    dates = pd.date_range("2024-01-01", periods=50, freq="1D")
+    dates = pd.date_range("2024-01-01", periods=N_BARS, freq="1D")
     np.random.seed(42)
-    close = 100 + np.cumsum(np.random.randn(50))
-    high = close + np.random.uniform(0.5, 2.0, 50)
-    low = close - np.random.uniform(0.5, 2.0, 50)
-    open_ = low + np.random.uniform(0, 1.0, 50) * (high - low)
-    volume = np.random.randint(100_000, 5_000_000, 50)
+    close = 100 + np.cumsum(np.random.randn(N_BARS))
+    high = close + np.random.uniform(0.5, 2.0, N_BARS)
+    low = close - np.random.uniform(0.5, 2.0, N_BARS)
+    open_ = low + np.random.uniform(0, 1.0, N_BARS) * (high - low)
+    volume = np.random.randint(100_000, 5_000_000, N_BARS)
     vwap = (high + low + close) / 3.0
 
     return pd.DataFrame({
@@ -51,22 +55,22 @@ def sample_ohlcv_data():
 
 def test_individual_alphas(sample_ohlcv_data):
     a1 = alpha_001(sample_ohlcv_data)
-    assert len(a1) == 50
+    assert len(a1) == N_BARS
 
     a6 = alpha_006(sample_ohlcv_data)
-    assert len(a6) == 50
+    assert len(a6) == N_BARS
 
     a12 = alpha_012(sample_ohlcv_data)
-    assert len(a12) == 50
+    assert len(a12) == N_BARS
 
     a41 = alpha_041(sample_ohlcv_data)
-    assert len(a41) == 50
+    assert len(a41) == N_BARS
 
     a53 = alpha_053(sample_ohlcv_data)
-    assert len(a53) == 50
+    assert len(a53) == N_BARS
 
     a101 = alpha_101(sample_ohlcv_data)
-    assert len(a101) == 50
+    assert len(a101) == N_BARS
     # Alpha 101 should be roughly in [-1, 1]
     assert a101.dropna().abs().max() <= 1.05
 
@@ -79,7 +83,7 @@ def test_compute_all_alphas(sample_ohlcv_data):
     ]
     for col in expected_cols:
         assert col in all_alphas.columns
-    assert len(all_alphas) == 50
+    assert len(all_alphas) == N_BARS
 
 
 def test_alpha_ic_and_ranking(sample_ohlcv_data):
@@ -159,4 +163,58 @@ def test_optimize_alpha_weights(sample_ohlcv_data):
 
     # Weights should sum to ~1.0 in absolute terms
     assert abs(sum(abs(v) for v in w_vol.values()) - 1.0) < 1e-2
+
+
+# ---------------------------------------------------------------------------
+# Causality: features must never change when FUTURE bars are appended.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def long_ohlcv_data():
+    rng = np.random.default_rng(7)
+    n = 400
+    close = pd.Series(100 + rng.normal(0, 1, n).cumsum())
+    open_ = close.shift(1).fillna(100.0) + rng.normal(0, 0.1, n)
+    high = np.maximum(open_, close) + rng.uniform(0.1, 1.0, n)
+    low = np.minimum(open_, close) - rng.uniform(0.1, 1.0, n)
+    return pd.DataFrame({
+        'Open': open_, 'High': high, 'Low': low, 'Close': close,
+        'Volume': rng.integers(1_000, 5_000, n).astype(float),
+        'VWAP': (high + low + close) / 3.0,
+    })
+
+
+def test_alphas_have_no_lookahead(long_ohlcv_data):
+    """Appending future bars must leave every past alpha value unchanged."""
+    df = long_ohlcv_data
+    full = compute_all_alphas(df)
+    partial = compute_all_alphas(df.iloc[:300])
+    diff = (full.iloc[:300] - partial).abs().max()
+    leaking = diff[diff > 1e-9]
+    assert leaking.empty, f"Alphas use future data: {leaking.to_dict()}"
+
+
+def test_alphas_are_scale_invariant(long_ohlcv_data):
+    """Alphas must not depend on the absolute price level (stationarity)."""
+    df = long_ohlcv_data
+    scaled = df.copy()
+    for col in ('Open', 'High', 'Low', 'Close', 'VWAP'):
+        scaled[col] = scaled[col] * 5.0
+    base = compute_all_alphas(df)
+    big = compute_all_alphas(scaled)
+    # Alphas 012, 041, 054 are the ones that were price-level dependent.
+    for col in ('alpha_012', 'alpha_041', 'alpha_054'):
+        pd.testing.assert_series_equal(base[col], big[col], rtol=1e-6, atol=1e-9, check_names=False)
+
+
+def test_rank_is_trailing_percentile():
+    from formulaic_alphas import rank
+    s = pd.Series(np.arange(1.0, 101.0))
+    r = rank(s, window=10)
+    assert r.iloc[:9].isna().all()
+    # Newest value is the max of its window -> rank 1.0
+    assert r.iloc[9:].eq(1.0).all()
+    r_desc = rank(s[::-1].reset_index(drop=True), window=10)
+    # Newest value is the min of its window -> rank 1/10
+    assert r_desc.iloc[9:].round(6).eq(0.1).all()
 

@@ -211,8 +211,12 @@ def download_spy_intraday(warmup_days: int = 25) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def create_features(data: pd.DataFrame, spy_data: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-    """Create the V3+ 31-feature matrix via quant_core.
+def create_features(
+    data: pd.DataFrame,
+    spy_data: Optional[pd.DataFrame] = None,
+    include_alphas: bool = False,
+) -> pd.DataFrame:
+    """Create the V3+ feature matrix via quant_core.
 
     Parameters
     ----------
@@ -220,11 +224,15 @@ def create_features(data: pd.DataFrame, spy_data: Optional[pd.DataFrame] = None)
         20-minute OHLCV bars (from download_intraday_data).
     spy_data : pd.DataFrame or None
         Matching SPY bars. If None, attempts to download SPY automatically.
+    include_alphas : bool
+        False (default) -> the 31 V3+ columns (quant_core.FEATURE_COLUMNS).
+        True -> the 43 V4 columns (quant_core.EXTENDED_FEATURE_COLUMNS). Must
+        match the feature set the loaded model artifact was trained on.
 
     Returns
     -------
     pd.DataFrame
-        Feature matrix with 31 columns matching quant_core.FEATURE_COLUMNS.
+        Feature matrix with 31 (or 43 with alphas) columns.
     """
     if data is None or data.empty:
         raise ValueError('At least 65 trading bars are required to create features.')
@@ -235,7 +243,7 @@ def create_features(data: pd.DataFrame, spy_data: Optional[pd.DataFrame] = None)
     if spy_data is None:
         spy_data = download_spy_intraday()
 
-    return quant_core.compute_features(data, spy_data)
+    return quant_core.compute_features(data, spy_data, include_alphas=include_alphas)
 
 
 # --- Kaggle/news utilities (preserved from V2) ---

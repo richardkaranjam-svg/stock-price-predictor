@@ -51,3 +51,8 @@ stop_server.bat
 Eddy project/
 *.zip
 scratch/
+
+# Generated backtest / audit outputs and client staging (never commit; HTML here skews GitHub language stats)
+reports/
+inbox/
+outbox/

@@ -23,6 +23,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+import config  # noqa: F401  (side effect: loads .env so ALLOW_VERSION_MISMATCH etc. apply to `python predict.py`)
 import quant_core
 from data_loader import download_intraday_data, download_spy_intraday, create_features, get_news_summary
 from db_migration import log_signal
@@ -165,6 +166,14 @@ def _load_model() -> Any:
     return model
 
 
+def _model_uses_alphas(model: Any) -> bool:
+    """True when the artifact was trained with the 12 formulaic-alpha columns."""
+    cols = getattr(model, 'feature_columns', None)
+    if not cols:
+        return False
+    return any(c in quant_core.FORMULAIC_ALPHA_COLUMNS for c in cols)
+
+
 def _load_metadata() -> dict:
     """Load model_metadata.json."""
     if METADATA_PATH.exists():
@@ -226,11 +235,13 @@ def predict_v3(ticker: str = 'AAPL') -> Dict[str, Any]:
     model = _load_model()
     metadata = _load_metadata()
 
+    # Build exactly the feature set the loaded artifact was trained on
+    # (31 V3+ columns, or 43 with formulaic alphas for V4 artifacts).
+    include_alphas = _model_uses_alphas(model)
+
     # --- Get data and compute features ---
     data = get_latest_stock_data(ticker)
     spy_data = download_spy_intraday()
-
-    features = create_features(data, spy_data)
 
     # Apply closed-bar filter
     now_et = quant_core.get_et_now()
@@ -239,8 +250,8 @@ def predict_v3(ticker: str = 'AAPL') -> Dict[str, Any]:
     if data_closed.empty:
         raise ValueError("No closed bars available for prediction.")
 
-    # Recompute features on closed bars only
-    features_closed = create_features(data_closed, spy_data)
+    # Compute features on closed bars only
+    features_closed = create_features(data_closed, spy_data, include_alphas=include_alphas)
 
     if features_closed.empty:
         raise ValueError("Not enough closed-bar data to create prediction features.")

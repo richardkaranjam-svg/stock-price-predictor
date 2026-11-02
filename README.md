@@ -21,43 +21,36 @@ The V3+ engine replaces naive single-step regression with a path-aware, calibrat
 - **Interactive Web Dashboard (`app.py`)**: Real-time Flask dashboard with live model diagnostics, probability distributions, paper trading controls, and audit log.
 - **SQLite Audit Trail & Auto-Migration (`db_migration.py`)**: Automatic idempotent schema migration recording ATR at entry, expected value, ratchet status, and confidence metrics.
 
+> **Scope note:** the client strategy-audit tooling (trade-log auditor, meta-labeling, benchmark portfolios, league table, Discord/Slack digests, interactive CLI, Docker files) lives on the `feature/strategy-audit` branch. `main` is focused on the V3+ predictor, trainer, paper trader and dashboard.
+
 ---
 
 ## 🛠️ Project Structure
 
 ```text
-├── quant_core.py             # Core math, fracdiff, 31/43 feature extraction, calibration
-├── formulaic_alphas.py       # WorldQuant 101 Formulaic Alphas engine & Rank IC evaluation
-├── quant_stats.py            # Deflated Sharpe Ratio (DSR), PSR, 95% VaR & CVaR risk engine
-├── audit_strategy.py         # Universal trade log auditor & dark-mode HTML factsheet generator
-├── meta_label_optimizer.py   # ML confidence hurdle optimization & comparative equity curve
-├── benchmark_strategies.py   # Trend Breakout, Mean Reversion, Multi-Alpha benchmark portfolios
-├── simulate_session.py       # 19-bar intraday trading session & signal lifecycle simulator
-├── fetch_bars.py             # Client signals CSV intake & Alpaca historical bar streaming
-├── colab_cloud_trainer.py    # Walk-forward CV cloud trainer with V4 Alpha support
+├── quant_core.py             # Core math, fracdiff, 31-feature extraction (43 with alphas), calibration
+├── formulaic_alphas.py       # Causal WorldQuant-101 alpha features (optional V4 feature set)
+├── colab_cloud_trainer.py    # Walk-forward CV cloud trainer (V3+ default, V4 with INCLUDE_ALPHAS=1)
 ├── data_loader.py            # Alpaca SIP / real-time bar fetching & feature preparation
 ├── broker.py                 # Alpaca paper trading client with short-selling & margin guards
 ├── auto_trader.py            # Autonomous trading engine with risk guards and dynamic stops
-├── predict.py                # V3+ calibrated inference engine using dict model artifact
+├── predict.py                # Calibrated inference; builds the feature set the model was trained on
+├── backtest_report.py        # Out-of-sample backtest of the model's signals
+├── evaluate_v3_model.py      # Walk-forward OOS signal generation for backtest_report.py
+├── simulate_session.py       # 19-bar intraday trading session & signal lifecycle simulator
 ├── app.py                    # Flask web dashboard and REST API
 ├── config.py                 # Market-hours guards and configuration utilities
 ├── db_migration.py           # SQLite schema migration utility & signals persistence
-├── PITCH_AND_INTAKE_GUIDE.md # Client strategy intake, pitching & audit presentation guide
-├── stock_price_model.pkl     # Trained V3+ model artifact (plain dictionary)
+├── stock_price_model.pkl     # Trained model artifact (plain dictionary)
 ├── model_metadata.json       # Ensemble hyperparameters and validation metrics
 ├── test_quant_invariants.py  # Invariant verification test suite
-├── tests/                    # 120 passing unit and integration tests across 11 test suites
-│   ├── test_simulate_session.py
-│   ├── test_audit_strategy.py
-│   ├── test_meta_label_optimizer.py
-│   ├── test_benchmark_strategies.py
+├── tests/                    # Unit and integration tests
+│   ├── test_pipeline.py
 │   ├── test_version_and_signals.py
-│   ├── test_formulaic_alphas.py
-│   ├── test_quant_stats.py
-│   ├── test_fetch_bars.py
+│   ├── test_formulaic_alphas.py   # Includes no-lookahead / scale-invariance checks
 │   ├── test_colab_trainer.py
 │   ├── test_backtest_report.py
-│   └── test_pipeline.py
+│   └── test_simulate_session.py
 ├── templates/
 │   └── index.html            # Dashboard HTML
 ├── static/
@@ -115,29 +108,18 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000) to view:
 - Alpaca paper account equity and position
 - Autonomous trading controls and trade execution history
 
-### Client Strategy Audit & Institutional Factsheet
-```bash
-python audit_strategy.py --csv path/to/client_trades.csv --out reports/client_audit
-```
-Parses trade logs from TradingView, MT4/MT5, Interactive Brokers, NinjaTrader, or TradeStation. Computes Deflated Sharpe Ratio (DSR), Probabilistic Sharpe Ratio (PSR), 95% VaR/CVaR, and produces an interactive dark-mode HTML factsheet.
-
-### ML Meta-Labeling Threshold Optimization
-```bash
-python meta_label_optimizer.py --csv path/to/trades_with_conf.csv --out reports/meta_labeled
-```
-Sweeps confidence thresholds to filter low-probability trades, maximizing Profit Factor and Net PnL while maintaining statistical significance ($N \ge 100$). Generates comparative before/after equity curves.
-
-### WorldQuant Multi-Alpha Portfolio Optimization
+### Optional: Formulaic Alpha Features (V4)
 ```bash
 python formulaic_alphas.py --optimize-portfolio
 ```
-Calculates Spearman Rank Information Coefficients across multi-horizon forward returns ($h=1,3,5,10$) for 12 Kakushadze alphas and computes optimal multi-factor weights.
+Ranks the 12 Kakushadze alphas by Spearman Rank IC across forward horizons. Every alpha is causal: rank operators use a trailing 50-bar window and price-level alphas are normalised, so appending future bars never changes past values (enforced by `tests/test_formulaic_alphas.py`). Train with `INCLUDE_ALPHAS=1` to produce a 43-feature V4 model; `predict.py` detects it from the artifact's `feature_columns` and builds matching features automatically.
 
-### Client Signal Bar Streaming & Risk Simulation
+### Out-of-Sample Backtest
 ```bash
-python fetch_bars.py --signals path/to/signals.csv --out cache/bars --run reports/client_run
+python evaluate_v3_model.py
+python backtest_report.py --signals path/to/signals.csv --bars-cache path/to/bars --out reports
 ```
-Streams 20-minute historical bars from Alpaca for raw customer entry signals and executes the full ATR risk stop and ratchet backtest simulation.
+Generates walk-forward OOS signals from the trained model and backtests them with ATR stops, slippage and commissions.
 
 ### Model Training (Google Colab)
 Local short-sample training is disabled to protect against lookahead bias and model wipeouts. To retrain the 10-year model:
@@ -158,7 +140,7 @@ Local short-sample training is disabled to protect against lookahead bias and mo
 Run the full invariant and pipeline test suites:
 
 ```bash
-# 12 institutional invariant tests (zero-lookahead, gap isolation, closed bars, margin guards, etc.)
+# Institutional invariant tests (zero-lookahead, gap isolation, closed bars, margin guards, etc.)
 pytest test_quant_invariants.py
 
 # Full unit and integration test suite

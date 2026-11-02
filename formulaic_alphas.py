@@ -15,17 +15,44 @@ import pandas as pd
 # ATOMIC QUANT OPERATORS (Kakushadze 2016 Standard)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def rank(series: pd.Series) -> pd.Series:
-    """Cross-sectional or rolling percentile rank in [0, 1]."""
-    return series.rank(pct=True)
+RANK_WINDOW = 50  # Trailing bars used by rank(); keeps every alpha strictly causal.
+
+
+def _rolling_last_pct_rank(values: np.ndarray, window: int) -> np.ndarray:
+    """Percentile rank (0-1] of each value within its trailing ``window`` bars.
+
+    Uses only the current and previous ``window - 1`` bars, so a value never
+    changes when later bars are appended (no lookahead). Windows containing a
+    NaN yield NaN. Ties receive the average rank, matching ``Series.rank(pct=True)``.
+    """
+    values = np.asarray(values, dtype=np.float64)
+    n = len(values)
+    out = np.full(n, np.nan)
+    if window < 1 or n < window:
+        return out
+    win = np.lib.stride_tricks.sliding_window_view(values, window)
+    last = win[:, -1][:, None]
+    less = (win < last).sum(axis=1)
+    equal = (win == last).sum(axis=1)
+    ranks = (less + (equal + 1) / 2.0) / window
+    valid = ~np.isnan(win).any(axis=1)
+    out[window - 1:] = np.where(valid, ranks, np.nan)
+    return out
+
+
+def rank(series: pd.Series, window: int = RANK_WINDOW) -> pd.Series:
+    """Trailing-window percentile rank in [0, 1] (causal; never uses future bars).
+
+    The original paper ranks across a stock universe at one instant. With a
+    single ticker there is no cross-section, and ranking over the whole history
+    leaks future data into past rows, so we rank against the trailing window.
+    """
+    return pd.Series(_rolling_last_pct_rank(series.to_numpy(), window), index=series.index)
 
 
 def ts_rank(series: pd.Series, window: int = 10) -> pd.Series:
     """Time-series percentile rank over rolling window."""
-    return series.rolling(window).apply(
-        lambda s: pd.Series(s).rank(pct=True).iloc[-1] if len(s) == window else np.nan,
-        raw=False
-    )
+    return pd.Series(_rolling_last_pct_rank(series.to_numpy(), window), index=series.index)
 
 
 def delta(series: pd.Series, period: int = 1) -> pd.Series:
@@ -117,11 +144,12 @@ def alpha_006(df: pd.DataFrame, window: int = 10) -> pd.Series:
 def alpha_012(df: pd.DataFrame) -> pd.Series:
     """
     Alpha#12: sign(delta(volume, 1)) * (-1 * delta(close, 1))
-    Volume divergence momentum.
+    Volume divergence momentum. The price change is expressed as a return
+    (divided by the prior close) so the feature is stationary across years.
     """
     vol_delta = delta(df['Volume'], 1)
-    close_delta = delta(df['Close'], 1)
-    return np.sign(vol_delta) * (-1.0 * close_delta)
+    close_ret = df['Close'].pct_change(1)
+    return np.sign(vol_delta) * (-1.0 * close_ret)
 
 
 def alpha_014(df: pd.DataFrame) -> pd.Series:
@@ -138,11 +166,12 @@ def alpha_014(df: pd.DataFrame) -> pd.Series:
 def alpha_041(df: pd.DataFrame) -> pd.Series:
     """
     Alpha#41: (((high * low)^0.5) - vwap)
-    Geometric bar center vs. Volume-Weighted clearing price.
+    Geometric bar center vs. Volume-Weighted clearing price, divided by close
+    so the value is a dimensionless fraction rather than a dollar amount.
     """
     geom_mean = np.sqrt(df['High'] * df['Low'])
     vwap = df.get('VWAP', (df['High'] + df['Low'] + df['Close']) / 3.0)
-    return geom_mean - vwap
+    return (geom_mean - vwap) / df['Close'].replace(0, np.nan)
 
 
 def alpha_053(df: pd.DataFrame, window: int = 9) -> pd.Series:
@@ -167,12 +196,11 @@ def alpha_054(df: pd.DataFrame) -> pd.Series:
     c = df['Close']
     o = df['Open']
     h = df['High']
-    # Scale prices to prevent float overflow on power of 5
-    p_mean = c.mean() if len(c) > 0 and c.mean() > 0 else 1.0
-    o_norm = o / p_mean
-    c_norm = c / p_mean
-    num = -1.0 * (l - c) * (o_norm ** 5)
-    denom = (l - h).replace(0, -1e-5) * (c_norm ** 5)
+    # (open^5) / (close^5) == (open / close)^5: dividing first avoids float
+    # overflow without needing a whole-history mean (which leaked future data).
+    price_ratio_5 = (o / c.replace(0, np.nan)) ** 5
+    num = -1.0 * (l - c) * price_ratio_5
+    denom = (l - h).replace(0, -1e-5)
     return num / denom
 
 
@@ -455,7 +483,3 @@ if __name__ == '__main__':
         port_csv.parent.mkdir(parents=True, exist_ok=True)
         port_trades.to_csv(port_csv, index=False)
         print(f"\n  Exported {len(port_trades)} simulated multi-alpha trades to: {port_csv}")
-
-        from audit_strategy import run_strategy_backtest, print_official_verdict_card
-        audit_res = run_strategy_backtest(str(port_csv), output_dir="reports/optimal_multi_alpha", export_html=True)
-        print_official_verdict_card(audit_res)

@@ -1,0 +1,2 @@
+# Keep GitHub language stats honest: notebooks are documentation, not source.
+*.ipynb linguist-documentation=true

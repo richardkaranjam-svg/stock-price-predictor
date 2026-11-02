@@ -125,3 +125,18 @@
 | 16 | Pickle Cross-Environment (Tweak 5) | 1A.7–8, 3C.4a |
 | 17 | Uniqueness + Recency Weighting (Tweak 6) | 1A.5–6, 2B.4–5 |
 | 18 | Overnight Gap & Unclosed Bar Lookahead | 1A.3, 3C.1c, 3C.4b |
+
+---
+
+## Phase 6: Scope Cleanup (2026-11-03)
+Goal: bring `main` back to the V3+ objective (predict -> trade -> audit trail) after a drift into client-audit tooling.
+- [x] 6.1 - Safety net: tag `pre-scope-cleanup` (= `b638ea8`) and branch `feature/strategy-audit` holding all off-topic work
+- [x] 6.2 - Move off `main`: `audit_strategy`, `meta_label_optimizer`, `benchmark_strategies`, `batch_processor`, `generate_league_table`, `fetch_bars`, `quant_stats`, `cli`, `notifications`, `daily_digest`, `PITCH_AND_INTAKE_GUIDE.md`, Docker files and their tests
+- [x] 6.3 - `app.py` / `index.html`: remove report, leaderboard, benchmark routes and `/api/v3/filter` webhook (kept `/paper/signals` feed)
+- [x] 6.4 - Stop tracking generated `reports/`, `inbox/`, `outbox/` (they made GitHub report HTML as the main language); `.gitattributes` marks notebooks as documentation
+- [x] 6.5 - Keep Gemini additions that serve the core: signal logging + outcome filling (`db_migration`), library version guard (`predict.check_library_versions`), `env_versions` in artifacts, pinned `requirements.txt`
+- [x] 6.6 - **Fix V4 lookahead**: `formulaic_alphas.rank()` / `ts_rank()` are now trailing-window (50 / N bars); `alpha_012`, `alpha_041`, `alpha_054` normalised to be price-level independent. Regression tests: `test_alphas_have_no_lookahead`, `test_alphas_are_scale_invariant`, `test_rank_is_trailing_percentile`
+- [x] 6.7 - **Fix train/serve skew**: `data_loader.create_features(include_alphas=...)`; `predict_v3` builds the feature set the loaded artifact was trained on (`_model_uses_alphas`). Regression test: `test_predict_v3_builds_43_features_for_v4_artifact`
+- [x] 6.8 - Notebook defaults to `INCLUDE_ALPHAS=0` (V3+); README rewritten for `main`
+- [ ] 6.9 - **Retrain in Colab on pinned versions** (sklearn 1.9.0 / lightgbm 4.7.0) so the version guard passes; then delete `ALLOW_VERSION_MISMATCH=1` from `.env`
+- [ ] 6.10 - Retrain with `INCLUDE_ALPHAS=1` (now causal) and compare OOS metrics against V3+ before deploying V4
